@@ -2,6 +2,7 @@ import bpy
 import os
 import time
 import gpu
+import bgl
 import numpy as np
 from math import sin, cos, tan, ceil, degrees, pi
 from datetime import datetime
@@ -302,9 +303,8 @@ class Renderer:
         self.no_side_images = h_fov <= front_fov
         self.no_top_bottom_images = v_fov <= front_fov
         self.seamless = not (context.scene.render.use_multiview and h_fov > pi and props.appliesParallaxForSideAndBack)
+        self.remain_temporaries = context.preferences.addons[__package__].preferences.remain_temporaries
 
-        self.createdFiles = set()
-        
         # Calcurate dimension
         self.resolution_x_origin = self.scene.render.resolution_x
         self.resolution_y_origin = self.scene.render.resolution_y
@@ -500,8 +500,9 @@ class Renderer:
         
         # Remove the cubemap textures:
         del textures
-        for image in imageList:
-            bpy.data.images.remove(image)
+        if not self.remain_temporaries:
+            for image in imageList:
+                bpy.data.images.remove(image)
         
         # Copy the pixels from the buffer to an image object
         if not outputName in bpy.data.images.keys():
@@ -580,17 +581,37 @@ class Renderer:
         if self.is_stereo:
             self.scene.render.image_settings.views_format = self.view_format
             self.scene.render.image_settings.stereo_3d_format.display_mode = self.stereo_mode
-        if not context.preferences.addons[__package__].preferences.remain_temporaries:
-            for filename in self.createdFiles:
-                os.remove(filename)
-        self.createdFiles.clear()
-    
-    
+
+    @staticmethod
+    def get_render_result():
+        # Find render result
+        render_result = next(image for image in bpy.data.images if image.type == "RENDER_RESULT")
+
+        # Create a GPU texture that shares GPU memory with Blender
+        gpu_tex = gpu.texture.from_image(render_result)
+
+        # Read image from GPU
+        gpu_tex.read()
+
+        # OR read image into a NumPy array (might be more convenient for later operations)
+        fbo = gpu.types.GPUFrameBuffer(color_slots=(gpu_tex,))
+
+        print('gpu_tex', gpu_tex.width, gpu_tex.height) # 現状(1,1)が帰ってしまって役に立たない
+
+        buffer_np = np.empty(gpu_tex.width * gpu_tex.height * 4, dtype=np.float32)
+        buffer = bgl.Buffer(bgl.GL_FLOAT, buffer_np.shape, buffer_np)
+        with fbo.bind():
+            bgl.glReadBuffer(bgl.GL_BACK)
+            bgl.glReadPixels(0, 0, gpu_tex.width, gpu_tex.height, bgl.GL_RGBA, bgl.GL_FLOAT, buffer)
+
+        # Now the NumPy array has the pixel data, you can reshape it and/or export it as bytes if you wish
+        return buffer_np
+
+
     def render_image(self, direction):
 
         # Render the image and load it into the script
-        name = f'temp_img_store_{os.getpid()}_{direction}'
-        tmp = self.scene.render.filepath
+        name = f'temp_img_store_{direction}'
 
         if self.is_stereo:
             nameL = name + '_L'
@@ -599,9 +620,12 @@ class Renderer:
                 bpy.data.images.remove(bpy.data.images[nameL])
             if nameR in bpy.data.images:
                 bpy.data.images.remove(bpy.data.images[nameR])
+            
+            renderedImageL = bpy.data.images.new(nameL, self.scene.render.resolution_x, self.scene.render.resolution_y)
+            renderedImageR = bpy.data.images.new(nameR, self.scene.render.resolution_x, self.scene.render.resolution_y)
 
             if self.seamless and direction in {'right', 'left'}:
-                # If rendering for VR, render the side images separately to avoid seams
+                # If rendering for VR, render the side images separately to avoid seams                # If rendering for VR, render the side images separately to avoid seams
 
                 self.scene.render.use_multiview = False
                 tmp_loc = list(self.camera.location)
@@ -609,68 +633,39 @@ class Renderer:
                 self.camera.location = [tmp_loc[0]+(0.5*self.IPD*cos(camera_angle)),\
                                         tmp_loc[1]+(0.5*self.IPD*sin(camera_angle)),\
                                         tmp_loc[2]]
-
-                self.scene.render.filepath = self.path + nameL + self.fext
-                bpy.ops.render.render(write_still=True)
-                self.createdFiles.add(self.scene.render.filepath)
-                renderedImageL = bpy.data.images.load(self.scene.render.filepath)
-                renderedImageL.name = nameL
+                bpy.ops.render.render()
+                renderedImageL.pixels.foreach_set(self.get_render_result()[:])
                 
                 self.camera.location = [tmp_loc[0]-(0.5*self.IPD*cos(camera_angle)),\
                                         tmp_loc[1]-(0.5*self.IPD*sin(camera_angle)),\
                                         tmp_loc[2]]
-
-                self.scene.render.filepath = self.path + nameR + self.fext
-                bpy.ops.render.render(write_still=True)
-                self.createdFiles.add(self.scene.render.filepath)
-                renderedImageR = bpy.data.images.load(self.scene.render.filepath)
-                renderedImageR.name = nameR
+                bpy.ops.render.render()
+                renderedImageR.pixels.foreach_set(self.get_render_result()[:])
 
                 self.scene.render.use_multiview = True
                 self.camera.location = tmp_loc
-            
+
             else:
-                if name in bpy.data.images:
-                    bpy.data.images.remove(bpy.data.images[name])
-                if nameL in bpy.data.images:
-                    bpy.data.images.remove(bpy.data.images[nameL])
-                if nameR in bpy.data.images:
-                    bpy.data.images.remove(bpy.data.images[nameR])
-                self.scene.render.filepath = self.path + name + self.fext
-                bpy.ops.render.render(write_still=True)
-                self.createdFiles.add(self.scene.render.filepath)
-                renderedImage =  bpy.data.images.load(self.scene.render.filepath)
-                renderedImage.name = name
-                renderedImage.colorspace_settings.name='Linear'
-                imageLen = len(renderedImage.pixels)
-                renderedImageL = bpy.data.images.new(nameL, self.scene.render.resolution_x, self.scene.render.resolution_y)
-                renderedImageR = bpy.data.images.new(nameR, self.scene.render.resolution_x, self.scene.render.resolution_y)
-                
+                bpy.ops.render.render()
+
                 # Split the render into two images
-                buff = np.empty((imageLen,), dtype=np.float32)
-                renderedImage.pixels.foreach_get(buff)
+                buff = self.get_render_result()
+                imageLen = len(buff)
                 if self.seamless and direction == 'back':
                     renderedImageL.pixels.foreach_set(buff[imageLen//2:])
                     renderedImageR.pixels.foreach_set(buff[:imageLen//2])
                 else:
                     renderedImageR.pixels.foreach_set(buff[imageLen//2:])
                     renderedImageL.pixels.foreach_set(buff[:imageLen//2])
-                renderedImageL.pack()
-                renderedImageR.pack()
-                bpy.data.images.remove(renderedImage)
+            return renderedImageL, renderedImageR
         else:
             if name in bpy.data.images:
                 bpy.data.images.remove(bpy.data.images[name])
 
-            self.scene.render.filepath = self.path + name + self.fext
-            bpy.ops.render.render(write_still=True)
-            self.createdFiles.add(self.scene.render.filepath)
-            renderedImageL = bpy.data.images.load(self.scene.render.filepath)
-            renderedImageL.name = name
-            renderedImageR = None
-        
-        self.scene.render.filepath = tmp
-        return renderedImageL, renderedImageR
+            bpy.ops.render.render()
+            renderedImage = bpy.data.images.new(name, self.scene.render.resolution_x, self.scene.render.resolution_y)
+            renderedImage.pixels.foreach_set(self.get_render_result()[:])
+            return renderedImage, None
     
     
     def render_images(self):
