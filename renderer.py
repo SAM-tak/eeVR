@@ -2,7 +2,6 @@ import bpy
 import os
 import time
 import gpu
-import bgl
 import numpy as np
 from math import sin, cos, tan, ceil, degrees, pi
 from datetime import datetime
@@ -582,10 +581,11 @@ class Renderer:
             self.scene.render.image_settings.views_format = self.view_format
             self.scene.render.image_settings.stereo_3d_format.display_mode = self.stereo_mode
 
-    @staticmethod
-    def get_render_result():
+    def get_render_result(self):
         # Find render result
-        render_result = next(image for image in bpy.data.images if image.type == "RENDER_RESULT")
+        render_result : bpy.types.Image = next(image for image in bpy.data.images if image.type == "RENDER_RESULT")
+
+        render_result.gl_load() # これをやっても結局真っ黒
 
         # Create a GPU texture that shares GPU memory with Blender
         gpu_tex = gpu.texture.from_image(render_result)
@@ -596,13 +596,18 @@ class Renderer:
         # OR read image into a NumPy array (might be more convenient for later operations)
         fbo = gpu.types.GPUFrameBuffer(color_slots=(gpu_tex,))
 
-        print('gpu_tex', gpu_tex.width, gpu_tex.height) # 現状(1,1)が帰ってしまって役に立たない
+        # print('gpu_tex', gpu_tex.width, gpu_tex.height) # 現状(1,1)が帰ってしまって役に立たない
 
-        buffer_np = np.empty(gpu_tex.width * gpu_tex.height * 4, dtype=np.float32)
-        buffer = bgl.Buffer(bgl.GL_FLOAT, buffer_np.shape, buffer_np)
+        width = self.scene.render.resolution_x
+        height = self.scene.render.resolution_y
+        if self.scene.render.use_multiview:
+            height *= 2
+        buffer_np = np.empty(width * height * 4, dtype=np.float32)
+        buffer = gpu.types.Buffer('FLOAT', buffer_np.shape, buffer_np)
         with fbo.bind():
-            bgl.glReadBuffer(bgl.GL_BACK)
-            bgl.glReadPixels(0, 0, gpu_tex.width, gpu_tex.height, bgl.GL_RGBA, bgl.GL_FLOAT, buffer)
+            fbo.read_color(0, 0, width, height, 4, 0, 'FLOAT', data=buffer)
+
+        render_result.gl_free()
 
         # Now the NumPy array has the pixel data, you can reshape it and/or export it as bytes if you wish
         return buffer_np
