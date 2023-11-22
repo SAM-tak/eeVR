@@ -268,6 +268,7 @@ class Renderer:
         # Get the file extension
         self.fext = os.path.splitext(bpy.context.scene.render.frame_path(preview=True))[-1]
         self.fformat = bpy.context.scene.render.image_settings.file_format.format()
+        self.color_mode = bpy.context.scene.render.image_settings.color_mode
         # save original active object
         self.viewlayer_active_object_origin = context.view_layer.objects.active
         # save original active camera handle
@@ -468,7 +469,7 @@ class Renderer:
         # and load them into OpenGL textures
         textures = []
         for image in imageList:
-            image.colorspace_settings.name='Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
+            image.colorspace_settings.name = 'Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
             tex = gpu.texture.from_image(image)
             textures.append(tex)
         
@@ -533,8 +534,9 @@ class Renderer:
         
         # Copy the pixels from the buffer to an image object
         if not outputName in bpy.data.images.keys():
-            bpy.data.images.new(outputName, width, height)
+            bpy.data.images.new(outputName, width, height, alpha = True if self.color_mode=='RGBA' else False)
         imageRes = bpy.data.images[outputName]
+        imageRes.file_format = self.fformat
         imageRes.scale(width, height)
         imageRes.pixels.foreach_set(buffer)
         return imageRes
@@ -675,7 +677,7 @@ class Renderer:
                 self.createdFiles.add(self.scene.render.filepath)
                 renderedImage =  bpy.data.images.load(self.scene.render.filepath)
                 renderedImage.name = name
-                renderedImage.colorspace_settings.name='Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
+                renderedImage.colorspace_settings.name = 'Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
                 imageLen = len(renderedImage.pixels)
                 renderedImageL = bpy.data.images.new(nameL, self.scene.render.resolution_x, self.scene.render.resolution_y)
                 renderedImageR = bpy.data.images.new(nameR, self.scene.render.resolution_x, self.scene.render.resolution_y)
@@ -784,13 +786,10 @@ class Renderer:
         
         save_start_time = time.time()
         if self.is_animation:
-            # Color Management Settings issue solved by nagadomi
-            imageResult.file_format = self.fformat
             imageResult.filepath_raw = self.path+self.folder_name+image_name
             imageResult.save()
             self.scene.frame_set(self.scene.frame_current+frame_step)
         else:
-            imageResult.file_format = self.fformat
             imageResult.filepath_raw = self.path+image_name
             imageResult.save()
 
