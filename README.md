@@ -4,7 +4,7 @@ Blender addon to render 360° and 180° images and videos in eevee engine with s
 
 ## Getting Started
 
-You will need to get [**Blender 3.6 or upper**](https://www.blender.org), install it, download the zip file from this GitHub,
+You will need to get [**Blender 3.6 or higher**](https://www.blender.org), install it, download the zip file from this GitHub,
 load the addon into Blender by installing the zip file in Blender Preferences > Add-ons > Install,
 search for "eeVR" under the Community tab and click the checkbox to enable it.
 A eeVR panel will appear in the Properties' **Render tab**, FOV value adjustment, and buttons for rendering stills and animations.
