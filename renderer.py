@@ -468,7 +468,7 @@ class Renderer:
         # and load them into OpenGL textures
         textures = []
         for image in imageList:
-            image.colorspace_settings.name='Linear'
+            image.colorspace_settings.name='Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
             tex = gpu.texture.from_image(image)
             textures.append(tex)
         
@@ -675,7 +675,7 @@ class Renderer:
                 self.createdFiles.add(self.scene.render.filepath)
                 renderedImage =  bpy.data.images.load(self.scene.render.filepath)
                 renderedImage.name = name
-                renderedImage.colorspace_settings.name='Linear'
+                renderedImage.colorspace_settings.name='Linear' if bpy.app.version < (4, 0, 0) else 'Linear Rec.709'
                 imageLen = len(renderedImage.pixels)
                 renderedImageL = bpy.data.images.new(nameL, self.scene.render.resolution_x, self.scene.render.resolution_y)
                 renderedImageR = bpy.data.images.new(nameR, self.scene.render.resolution_x, self.scene.render.resolution_y)
